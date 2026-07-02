@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Django
+db.sqlite3
+db.sqlite3.*
+*.log
+logs/
+media/
+staticfiles/
+local_settings.py
+
+# Secrets & env
+.env
+.env.*
+!.env.example
+*.pem
+!keys/public*.pem
+production-secrets*.txt
+
+# ML / data artifacts
+mlruns/
+mlruns_backup*/
+*.pkl
+*.joblib
+
+# Node
+node_modules/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Coverage / build
+.coverage
+htmlcov/
+dist/
+build/
