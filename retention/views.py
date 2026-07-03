@@ -25,8 +25,9 @@ from .serializers import (
     EmployeeSerializer,
     SignalSerializer,
 )
+from . import notifications
 from .services.actions import ActionGenerationService
-from .services.chatbot import RetentionChatbotService
+from .services.chatbot import DialogueEngine, RetentionChatbotService
 from .services.detection import RiskDetectionService
 
 
@@ -60,6 +61,7 @@ class DetectRisksView(APIView):
             conversation = RetentionChatbotService.initiate_conversation(
                 item["employee"], item["signal"]
             )
+            notifications.notify_conversation_opened(item["employee"], conversation)
             results.append(
                 {
                     "employee": EmployeeSerializer(item["employee"]).data,
@@ -86,8 +88,9 @@ class ConversationViewSet(viewsets.ReadOnlyModelViewSet):
 
     @drf_action(detail=True, methods=["post"])
     def respond(self, request, pk=None):
-        """The employee replies; the bot extracts the need and an HR
-        action is generated."""
+        """The employee replies. Multi-turn: the bot asks follow-up
+        questions until it identifies the need; only then is the HR
+        action generated and the signal resolved."""
         conversation = self.get_object()
         message = (request.data.get("message") or "").strip()
         if not message:
@@ -95,22 +98,32 @@ class ConversationViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "message is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if conversation.completed:
+            return Response(
+                {"detail": "This conversation is already completed."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         is_owner = conversation.employee.user_id == request.user.id
         if not (is_owner or has_hr_access(request.user)):
             raise PermissionDenied("Not your conversation.")
 
-        result = RetentionChatbotService.process_employee_response(
-            conversation, message
-        )
-        generated = ActionGenerationService.generate_action(conversation)
-        conversation.signal.resolved = True
-        conversation.signal.save(update_fields=["resolved"])
+        result = DialogueEngine.advance(conversation, message)
+
+        action_data = None
+        if result["completed"]:
+            generated = ActionGenerationService.generate_action(conversation)
+            conversation.signal.resolved = True
+            conversation.signal.save(update_fields=["resolved"])
+            notifications.notify_action_pending(generated)
+            action_data = ActionSerializer(generated).data
 
         return Response(
             {
+                "bot_reply": result["bot_reply"],
+                "completed": result["completed"],
                 "identified_need": result["identified_need"],
-                "action": ActionSerializer(generated).data,
+                "action": action_data,
                 "messages": result["messages"],
             }
         )
@@ -222,6 +235,7 @@ class SignalIngestView(APIView):
         conversation = RetentionChatbotService.initiate_conversation(
             employee, signal
         )
+        notifications.notify_conversation_opened(employee, conversation)
         return Response(
             {
                 "signal_id": signal.id,

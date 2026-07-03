@@ -209,3 +209,89 @@ class SignalIngestTests(BaseCase):
             **bearer(78, "EMPLOYEE"),
         )
         self.assertEqual(resp.status_code, 400)
+
+
+class MultiTurnDialogueTests(BaseCase):
+    """v1.5: the bot keeps the dialogue going until it finds the need."""
+
+    def setUp(self):
+        self.emp = Employee.objects.create(
+            user_id=60, employee_id="E60", name="Nora",
+            email="nora@c.com", engagement_score=30,
+        )
+        self.client.post("/api/retention/detect/", **bearer(1, "HR"))
+        self.conv_id = self.emp.conversations.get().id
+
+    def _respond(self, message):
+        return self.client.post(
+            f"/api/retention/conversations/{self.conv_id}/respond/",
+            {"message": message},
+            content_type="application/json",
+            **bearer(60, "EMPLOYEE"),
+        )
+
+    def test_vague_answers_trigger_followups_then_action_on_clarity(self):
+        # turn 1: vague -> follow-up question, NO action yet
+        r1 = self._respond("Je ne sais pas vraiment, ça ne va pas en ce moment.")
+        self.assertEqual(r1.status_code, 200, r1.content)
+        self.assertFalse(r1.json()["completed"])
+        self.assertIsNone(r1.json()["action"])
+        self.assertIn("?", r1.json()["bot_reply"])
+        self.assertEqual(Action.objects.count(), 0)
+
+        # turn 2: still vague -> another follow-up
+        r2 = self._respond("C'est compliqué à expliquer.")
+        self.assertFalse(r2.json()["completed"])
+        self.assertEqual(Action.objects.count(), 0)
+
+        # turn 3: the need surfaces -> completion + action + resolution
+        r3 = self._respond("En fait je me sens surchargé, trop de stress.")
+        self.assertTrue(r3.json()["completed"])
+        self.assertEqual(r3.json()["identified_need"], "workload")
+        self.assertIsNotNone(r3.json()["action"])
+        self.assertTrue(Signal.objects.get().resolved)
+
+    def test_turn_budget_falls_back_to_general(self):
+        for i in range(3):
+            r = self._respond(f"réponse vague numéro {i}")
+            self.assertFalse(r.json()["completed"], r.content)
+        r = self._respond("encore une réponse vague")   # 4th employee turn
+        self.assertTrue(r.json()["completed"])
+        self.assertEqual(r.json()["identified_need"], "general")
+
+    def test_completed_conversation_rejects_new_messages(self):
+        self._respond("problème de salaire")            # completes immediately
+        again = self._respond("autre chose")
+        self.assertEqual(again.status_code, 409)
+
+
+class NotificationTests(BaseCase):
+    """Emails: conversation opened (employee) + action pending (HR)."""
+
+    def test_detection_emails_employee_and_completion_emails_hr(self):
+        import os
+        from django.core import mail
+
+        emp = Employee.objects.create(
+            user_id=61, employee_id="E61", name="Omar",
+            email="omar@c.com", engagement_score=30,
+        )
+        self.client.post("/api/retention/detect/", **bearer(1, "HR"))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("omar@c.com", mail.outbox[0].to)
+        self.assertIn("assistant RH", mail.outbox[0].subject)
+
+        os.environ["RETENTION_HR_EMAIL"] = "hr-inbox@corp.com"
+        try:
+            conv_id = emp.conversations.get().id
+            self.client.post(
+                f"/api/retention/conversations/{conv_id}/respond/",
+                {"message": "je veux une augmentation de salaire"},
+                content_type="application/json",
+                **bearer(61, "EMPLOYEE"),
+            )
+        finally:
+            del os.environ["RETENTION_HR_EMAIL"]
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertIn("hr-inbox@corp.com", mail.outbox[1].to)
+        self.assertIn("pending review", mail.outbox[1].subject)

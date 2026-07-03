@@ -129,3 +129,75 @@ Answer with just one word:"""
             return 'flexibility'
         else:
             return 'general'
+
+# ---------------------------------------------------------------------------
+# Multi-turn dialogue engine (v1.5): the bot keeps asking targeted
+# follow-up questions until it identifies the employee's primary need
+# (or the turn budget runs out), instead of closing after one reply.
+# ---------------------------------------------------------------------------
+
+MAX_EMPLOYEE_TURNS = 4
+
+FOLLOW_UP_QUESTIONS = [
+    "Merci de partager cela. Pouvez-vous m'en dire plus? Est-ce plutôt lié à votre rémunération, votre évolution, votre charge de travail, ou autre chose?",
+    "Je comprends. Si vous deviez choisir UNE chose que l'entreprise pourrait améliorer pour vous, ce serait quoi?",
+    "D'accord. Concrètement, qu'est-ce qui vous ferait rester dans l'entreprise à long terme?",
+]
+
+CLOSING_MESSAGES = {
+    "salary": "Merci pour votre franchise. Je transmets aux RH une proposition de révision de votre rémunération. Ils reviendront vers vous rapidement.",
+    "growth": "Merci. Je signale aux RH votre souhait d'évolution — ils étudieront les opportunités de mobilité interne ou de promotion.",
+    "workload": "Merci de me l'avoir dit. Je transmets aux RH une demande de rééquilibrage de votre charge de travail.",
+    "recognition": "Merci pour ce partage. Je propose aux RH d'organiser un entretien de reconnaissance et de valorisation de votre travail.",
+    "flexibility": "Merci. Je transmets aux RH votre demande d'aménagement (horaires flexibles / télétravail).",
+    "general": "Merci pour cet échange. Je transmets vos retours aux RH qui organiseront un entretien approfondi avec votre manager.",
+}
+
+
+class DialogueEngine:
+    """Stateful multi-turn conversation logic over Conversation.messages."""
+
+    @staticmethod
+    def _employee_turns(conversation) -> int:
+        return sum(1 for m in conversation.messages if m.get("role") == "user")
+
+    @staticmethod
+    def advance(conversation: "Conversation", user_message: str) -> Dict:
+        """Process one employee message; returns the bot's reply and
+        whether the conversation completed (need identified)."""
+        conversation.messages.append({"role": "user", "content": user_message})
+
+        if LLM_AVAILABLE:
+            need = RetentionChatbotService._extract_need_with_llm(
+                conversation.messages
+            )
+        else:
+            need = RetentionChatbotService._extract_need_simple(user_message)
+
+        turns = DialogueEngine._employee_turns(conversation)
+
+        if need != "general":
+            conversation.identified_need = need
+            conversation.completed = True
+            reply = CLOSING_MESSAGES.get(need, CLOSING_MESSAGES["general"])
+        elif turns >= MAX_EMPLOYEE_TURNS:
+            conversation.identified_need = "general"
+            conversation.completed = True
+            reply = CLOSING_MESSAGES["general"]
+        else:
+            # keep the dialogue going with a targeted follow-up
+            reply = FOLLOW_UP_QUESTIONS[
+                min(turns - 1, len(FOLLOW_UP_QUESTIONS) - 1)
+            ]
+
+        conversation.messages.append({"role": "assistant", "content": reply})
+        conversation.save()
+
+        return {
+            "conversation_id": conversation.id,
+            "bot_reply": reply,
+            "completed": conversation.completed,
+            "identified_need": conversation.identified_need,
+            "employee_turns": turns,
+            "messages": conversation.messages,
+        }
