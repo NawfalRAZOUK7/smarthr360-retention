@@ -41,7 +41,8 @@ class ActionSerializer(serializers.ModelSerializer):
         fields = [
             "id", "conversation", "employee", "employee_name", "description",
             "priority", "status", "created_at", "reviewed_at",
-            "reviewed_by_user_id",
+            "reviewed_by_user_id", "employee_retained", "outcome_note",
+            "outcome_recorded_at",
         ]
         read_only_fields = [
             "conversation", "employee", "description", "priority",

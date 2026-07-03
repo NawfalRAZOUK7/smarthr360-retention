@@ -295,3 +295,88 @@ class NotificationTests(BaseCase):
         self.assertEqual(len(mail.outbox), 2)
         self.assertIn("hr-inbox@corp.com", mail.outbox[1].to)
         self.assertIn("pending review", mail.outbox[1].subject)
+
+
+class OutcomeTrackingTests(BaseCase):
+    def _completed_action(self, user_id, need_message):
+        emp = Employee.objects.create(
+            user_id=user_id, employee_id=f"E{user_id}", name=f"U{user_id}",
+            email=f"u{user_id}@c.com", engagement_score=30,
+        )
+        self.client.post("/api/retention/detect/", **bearer(1, "HR"))
+        conv = emp.conversations.get()
+        self.client.post(
+            f"/api/retention/conversations/{conv.id}/respond/",
+            {"message": need_message},
+            content_type="application/json",
+            **bearer(user_id, "EMPLOYEE"),
+        )
+        action = Action.objects.get(conversation=conv)
+        self.client.post(
+            f"/api/retention/actions/{action.id}/review/",
+            {"status": "approved"},
+            content_type="application/json", **bearer(1, "HR"),
+        )
+        return action
+
+    def test_outcome_recording_rules_and_stats(self):
+        a1 = self._completed_action(80, "mon salaire est trop bas")
+        a2 = self._completed_action(81, "je veux évoluer, une promotion")
+
+        # outcome on pending action -> 409
+        pending_emp = Employee.objects.create(
+            user_id=82, employee_id="E82", name="P", email="p@c.com",
+            engagement_score=30,
+        )
+        self.client.post("/api/retention/detect/", **bearer(1, "HR"))
+        conv = pending_emp.conversations.get()
+        self.client.post(
+            f"/api/retention/conversations/{conv.id}/respond/",
+            {"message": "problème de salaire"},
+            content_type="application/json", **bearer(82, "EMPLOYEE"),
+        )
+        pending = Action.objects.get(conversation=conv)  # still 'pending'
+        denied = self.client.post(
+            f"/api/retention/actions/{pending.id}/outcome/",
+            {"retained": True}, content_type="application/json",
+            **bearer(1, "HR"),
+        )
+        self.assertEqual(denied.status_code, 409)
+
+        # record outcomes: one success, one failure
+        ok = self.client.post(
+            f"/api/retention/actions/{a1.id}/outcome/",
+            {"retained": True, "note": "Raise accepted; renewed for 2 years."},
+            content_type="application/json", **bearer(1, "HR"),
+        )
+        self.assertEqual(ok.status_code, 200, ok.content)
+        self.assertTrue(ok.json()["employee_retained"])
+        self.client.post(
+            f"/api/retention/actions/{a2.id}/outcome/",
+            {"retained": False, "note": "Left for a competitor."},
+            content_type="application/json", **bearer(1, "HR"),
+        )
+
+        stats = self.client.get(
+            "/api/retention/outcomes/", **bearer(1, "HR")
+        ).json()
+        self.assertEqual(stats["outcomes_recorded"], 2)
+        self.assertEqual(stats["employees_retained"], 1)
+        self.assertEqual(stats["success_rate_percent"], 50)
+        self.assertEqual(stats["by_need"]["salary"]["success_rate"], 100)
+        self.assertEqual(stats["by_need"]["growth"]["success_rate"], 0)
+
+        # validation + gates
+        self.assertEqual(
+            self.client.post(
+                f"/api/retention/actions/{a1.id}/outcome/",
+                {"retained": "yes"}, content_type="application/json",
+                **bearer(1, "HR"),
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get("/api/retention/outcomes/",
+                            **bearer(9, "EMPLOYEE")).status_code,
+            403,
+        )

@@ -89,5 +89,15 @@ class Action(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
     reviewed_by_user_id = models.PositiveBigIntegerField(null=True, blank=True)
 
+    # Outcome tracking: did the action actually retain the employee?
+    # Recorded weeks/months after completion — this is what turns the
+    # module into a measurable system (success-rate analytics).
+    employee_retained = models.BooleanField(null=True, blank=True)
+    outcome_note = models.TextField(blank=True)
+    outcome_recorded_at = models.DateTimeField(null=True, blank=True)
+    outcome_recorded_by_user_id = models.PositiveBigIntegerField(
+        null=True, blank=True
+    )
+
     def __str__(self):
         return f"{self.priority.upper()} - {self.employee.name}"

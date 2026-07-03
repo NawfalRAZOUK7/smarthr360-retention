@@ -140,6 +140,34 @@ class ActionViewSet(viewsets.ReadOnlyModelViewSet):
         return qs.filter(status=status_filter) if status_filter else qs
 
     @drf_action(detail=True, methods=["post"])
+    def outcome(self, request, pk=None):
+        """POST /actions/<id>/outcome/ {retained: bool, note?} — record
+        whether the action actually kept the employee (HR)."""
+        _require_hr(request)
+        retained = request.data.get("retained")
+        if not isinstance(retained, bool):
+            return Response(
+                {"detail": "retained must be a boolean."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        action_obj = self.get_object()
+        if action_obj.status not in ("approved", "completed"):
+            return Response(
+                {"detail": "Outcome can only be recorded on approved or "
+                           "completed actions."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        action_obj.employee_retained = retained
+        action_obj.outcome_note = request.data.get("note", "")
+        action_obj.outcome_recorded_at = timezone.now()
+        action_obj.outcome_recorded_by_user_id = request.user.id
+        action_obj.save(update_fields=[
+            "employee_retained", "outcome_note", "outcome_recorded_at",
+            "outcome_recorded_by_user_id",
+        ])
+        return Response(ActionSerializer(action_obj).data)
+
+    @drf_action(detail=True, methods=["post"])
     def review(self, request, pk=None):
         """HR approves or rejects a proposed retention action."""
         _require_hr(request)
@@ -244,4 +272,48 @@ class SignalIngestView(APIView):
                 "source": request.data.get("source", "unknown"),
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class OutcomeStatsView(APIView):
+    """GET /api/retention/outcomes/ — retention effectiveness (HR).
+
+    Success rate overall and per identified need — the numbers that
+    prove (or disprove) that the chatbot's proposals work.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _require_hr(request)
+        actions = Action.objects.select_related("conversation")
+
+        recorded = [a for a in actions if a.employee_retained is not None]
+        retained = [a for a in recorded if a.employee_retained]
+
+        by_need: dict[str, dict] = {}
+        for action in recorded:
+            need = action.conversation.identified_need or "general"
+            bucket = by_need.setdefault(need, {"recorded": 0, "retained": 0})
+            bucket["recorded"] += 1
+            bucket["retained"] += int(bool(action.employee_retained))
+        for bucket in by_need.values():
+            bucket["success_rate"] = round(
+                100 * bucket["retained"] / bucket["recorded"]
+            )
+
+        return Response(
+            {
+                "actions_total": actions.count(),
+                "by_status": {
+                    status_key: actions.filter(status=status_key).count()
+                    for status_key, _ in Action.STATUS_CHOICES
+                },
+                "outcomes_recorded": len(recorded),
+                "employees_retained": len(retained),
+                "success_rate_percent": round(
+                    100 * len(retained) / len(recorded)
+                ) if recorded else None,
+                "by_need": by_need,
+            }
         )
