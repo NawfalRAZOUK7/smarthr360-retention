@@ -6,6 +6,7 @@ from .views import (
     ConversationViewSet,
     DetectRisksView,
     EmployeeViewSet,
+    SignalIngestView,
     SignalListView,
 )
 
@@ -17,5 +18,6 @@ router.register("actions", ActionViewSet, basename="retention-action")
 urlpatterns = [
     path("detect/", DetectRisksView.as_view(), name="retention-detect"),
     path("signals/", SignalListView.as_view(), name="retention-signals"),
+    path("signals/ingest/", SignalIngestView.as_view(), name="retention-signal-ingest"),
     path("", include(router.urls)),
 ]

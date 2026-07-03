@@ -59,6 +59,7 @@ class RetentionChatbotService:
             'low_engagement': f"Bonjour {employee_name}, j'ai remarqué que vous semblez moins engagé récemment. Pouvez-vous me dire ce qui ne va pas?",
             'poor_performance': f"Bonjour {employee_name}, je voulais prendre de vos nouvelles. Y a-t-il quelque chose qui vous empêche de donner le meilleur de vous-même?",
             'high_absence': f"Bonjour {employee_name}, j'ai noté plusieurs absences récentes. Est-ce que tout va bien?",
+            'burnout_risk': f"Bonjour {employee_name}, votre charge de travail semble très élevée ces derniers temps. Comment vous sentez-vous? Peut-on en parler?",
         }
         
         return messages.get(signal_type, f"Bonjour {employee_name}, comment allez-vous?")

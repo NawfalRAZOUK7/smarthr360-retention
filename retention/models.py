@@ -35,6 +35,8 @@ class Signal(models.Model):
         ("high_absence", "High Absence Rate"),
         ("poor_performance", "Poor Performance"),
         ("negative_feedback", "Negative Feedback"),
+        # ingested from sibling services (e.g. smarthr360-workload)
+        ("burnout_risk", "Burnout Risk (workload)"),
     ]
 
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="signals")

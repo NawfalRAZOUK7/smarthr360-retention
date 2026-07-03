@@ -155,3 +155,79 @@ class SignalListView(APIView):
         _require_hr(request)
         signals = Signal.objects.filter(resolved=False)
         return Response(SignalSerializer(signals, many=True).data)
+
+
+class SignalIngestView(APIView):
+    """POST /api/retention/signals/ingest/ — cross-service signal intake.
+
+    Sibling services (e.g. workload's burnout alerts) push signals here
+    with the ORIGINAL caller's token passed through: a user may report
+    about themselves; managers/HR may report about anyone. Opens a
+    proactive chatbot conversation, deduplicating on unresolved signals
+    of the same type.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            user_id = int(request.data.get("user_id") or 0)
+            intensity = max(0, min(100, int(request.data.get("intensity", 50))))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "user_id and intensity must be integers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        signal_type = request.data.get("signal_type")
+        if not user_id or signal_type not in dict(Signal.SIGNAL_TYPES):
+            return Response(
+                {"detail": "valid user_id and signal_type are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        is_self = user_id == int(request.user.id)
+        if not (is_self or has_hr_access(request.user)):
+            from smarthr360_jwt_auth.access import has_manager_access
+
+            if not has_manager_access(request.user):
+                raise PermissionDenied(
+                    "Only the employee themself or managers/HR may ingest signals."
+                )
+
+        employee, _ = Employee.objects.get_or_create(
+            user_id=user_id,
+            defaults={
+                "employee_id": f"U-{user_id}",
+                "name": (request.data.get("name")
+                         or (getattr(request.user, "email", "") if is_self else "")
+                         or f"user-{user_id}"),
+                "email": (getattr(request.user, "email", "") if is_self else "")
+                         or request.data.get("email", ""),
+            },
+        )
+
+        existing = Signal.objects.filter(
+            employee=employee, signal_type=signal_type, resolved=False
+        ).first()
+        if existing:
+            return Response(
+                {"detail": "unresolved signal of this type already open.",
+                 "signal_id": existing.id, "deduplicated": True},
+                status=status.HTTP_200_OK,
+            )
+
+        signal = Signal.objects.create(
+            employee=employee, signal_type=signal_type, intensity=intensity
+        )
+        conversation = RetentionChatbotService.initiate_conversation(
+            employee, signal
+        )
+        return Response(
+            {
+                "signal_id": signal.id,
+                "conversation_id": conversation.id,
+                "opening_message": conversation.messages[-1]["content"],
+                "source": request.data.get("source", "unknown"),
+            },
+            status=status.HTTP_201_CREATED,
+        )

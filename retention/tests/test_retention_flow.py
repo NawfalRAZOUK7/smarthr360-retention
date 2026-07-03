@@ -152,3 +152,60 @@ class RetentionFlowTests(BaseCase):
         ):
             resp = getattr(self.client, method)(url, **bearer(9, "EMPLOYEE"))
             self.assertEqual(resp.status_code, 403, url)
+
+
+class SignalIngestTests(BaseCase):
+    """Cross-service signal intake (e.g. workload burnout alerts)."""
+
+    def test_self_report_creates_signal_and_conversation(self):
+        resp = self.client.post(
+            "/api/retention/signals/ingest/",
+            {"user_id": 77, "signal_type": "burnout_risk", "intensity": 86,
+             "source": "smarthr360-workload"},
+            content_type="application/json",
+            **bearer(77, "EMPLOYEE"),
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()
+        self.assertIn("charge de travail", body["opening_message"])
+        emp = Employee.objects.get(user_id=77)
+        self.assertEqual(emp.signals.get().signal_type, "burnout_risk")
+
+    def test_dedupe_open_signal(self):
+        for _ in range(2):
+            resp = self.client.post(
+                "/api/retention/signals/ingest/",
+                {"user_id": 78, "signal_type": "burnout_risk", "intensity": 90},
+                content_type="application/json",
+                **bearer(78, "EMPLOYEE"),
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["deduplicated"])
+        self.assertEqual(Employee.objects.get(user_id=78).signals.count(), 1)
+
+    def test_employee_cannot_report_others(self):
+        resp = self.client.post(
+            "/api/retention/signals/ingest/",
+            {"user_id": 99, "signal_type": "burnout_risk", "intensity": 90},
+            content_type="application/json",
+            **bearer(78, "EMPLOYEE"),
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_manager_can_report_team_member(self):
+        resp = self.client.post(
+            "/api/retention/signals/ingest/",
+            {"user_id": 99, "signal_type": "burnout_risk", "intensity": 75},
+            content_type="application/json",
+            **bearer(5, "MANAGER"),
+        )
+        self.assertEqual(resp.status_code, 201)
+
+    def test_invalid_type_rejected(self):
+        resp = self.client.post(
+            "/api/retention/signals/ingest/",
+            {"user_id": 78, "signal_type": "bad_vibes", "intensity": 50},
+            content_type="application/json",
+            **bearer(78, "EMPLOYEE"),
+        )
+        self.assertEqual(resp.status_code, 400)
