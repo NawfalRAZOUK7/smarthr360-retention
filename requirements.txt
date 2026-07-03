@@ -10,8 +10,8 @@ whitenoise>=6.6,<7.0
 psycopg2-binary>=2.9,<3.0
 
 # Shared platform JWT client (RS256 local verification).
-# Local dev alternative: pip install -e ../smarthr360-platform/packages/smarthr360-jwt-auth
-smarthr360-jwt-auth @ git+https://github.com/NawfalRAZOUK7/smarthr360.git#subdirectory=packages/smarthr360-jwt-auth
+# Shared platform JWT client — vendored wheel (built from smarthr360-platform/packages/smarthr360-jwt-auth).
+./smarthr360_jwt_auth-1.1.1-py3-none-any.whl
 
 # LLM need-extraction (optional: keyword fallback without it)
 openai>=1.30

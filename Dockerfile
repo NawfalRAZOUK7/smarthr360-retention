@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+COPY smarthr360_jwt_auth-1.1.1-py3-none-any.whl .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
