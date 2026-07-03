@@ -16,3 +16,6 @@ smarthr360-jwt-auth @ git+https://github.com/NawfalRAZOUK7/smarthr360.git#subdir
 # LLM need-extraction (optional: keyword fallback without it)
 openai>=1.30
 python-dotenv>=1.0
+
+# Observability
+django-prometheus>=2.3

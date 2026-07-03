@@ -15,6 +15,8 @@ def healthz(request):
 
 
 urlpatterns = [
+    # Prometheus metrics (observability)
+    path('', include('django_prometheus.urls')),
     path('admin/', admin.site.urls),
     path('healthz/', healthz, name='healthz'),
 
