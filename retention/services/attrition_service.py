@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Optional
 from uuid import uuid4
 
 from django.utils import timezone
