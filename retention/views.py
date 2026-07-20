@@ -275,6 +275,82 @@ class SignalIngestView(APIView):
         )
 
 
+class SelfWellbeingCheckinView(APIView):
+    """POST /api/retention/checkin/ {score: 1-5, note?} — private self check-in.
+
+    Opt-in and non-anonymous, self-only. This is deliberately DISTINCT from the
+    anonymous wellbeing surveys in core-hr (which must never link to a person):
+    here the employee *chooses* to report their own mood. A low score raises a
+    private ``low_wellbeing`` signal for that employee and opens a proactive
+    support conversation, reusing the retention pipeline. Nothing is stored for
+    a healthy check-in.
+    """
+
+    permission_classes = [IsAuthenticated]
+    LOW_THRESHOLD = 2  # scores 1-2 (of 5) escalate
+
+    def post(self, request):
+        try:
+            score = int(request.data.get("score"))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "score must be an integer from 1 to 5."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not 1 <= score <= 5:
+            return Response(
+                {"detail": "score must be between 1 and 5."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if score > self.LOW_THRESHOLD:
+            return Response(
+                {"flagged": False, "detail": "Thanks for checking in."},
+                status=status.HTTP_200_OK,
+            )
+
+        # Low check-in → raise a private signal for THIS user and open support.
+        user_id = int(request.user.id)
+        intensity = (self.LOW_THRESHOLD + 1 - score) * 50  # score1→100, score2→50
+        employee, _ = Employee.objects.get_or_create(
+            user_id=user_id,
+            defaults={
+                "employee_id": f"U-{user_id}",
+                "name": getattr(request.user, "email", "") or f"user-{user_id}",
+                "email": getattr(request.user, "email", "") or "",
+            },
+        )
+
+        existing = Signal.objects.filter(
+            employee=employee, signal_type="low_wellbeing", resolved=False
+        ).first()
+        if existing:
+            return Response(
+                {
+                    "flagged": True,
+                    "deduplicated": True,
+                    "signal_id": existing.id,
+                    "detail": "You already have an open check-in — support will follow up.",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        signal = Signal.objects.create(
+            employee=employee, signal_type="low_wellbeing", intensity=intensity
+        )
+        conversation = RetentionChatbotService.initiate_conversation(employee, signal)
+        notifications.notify_conversation_opened(employee, conversation)
+        return Response(
+            {
+                "flagged": True,
+                "signal_id": signal.id,
+                "conversation_id": conversation.id,
+                "detail": "Thanks for sharing. We've flagged this privately so support can reach out.",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class OutcomeStatsView(APIView):
     """GET /api/retention/outcomes/ — retention effectiveness (HR).
 

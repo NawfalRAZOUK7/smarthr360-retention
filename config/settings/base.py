@@ -50,6 +50,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Platform guarantee: AUDITOR tokens (public demo guest) are read-only.
+    'smarthr360_jwt_auth.readonly.AuditorReadOnlyMiddleware',
     'config.middleware.AdminIPWhitelistMiddleware',
     'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]

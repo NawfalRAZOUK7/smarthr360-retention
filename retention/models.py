@@ -41,6 +41,9 @@ class Signal(models.Model):
         ("negative_feedback", "Negative Feedback"),
         # ingested from sibling services (e.g. smarthr360-workload)
         ("burnout_risk", "Burnout Risk (workload)"),
+        # opt-in, non-anonymous self check-in (distinct from the anonymous
+        # wellbeing surveys in core-hr)
+        ("low_wellbeing", "Low Wellbeing (self check-in)"),
     ]
 
     employee = models.ForeignKey(

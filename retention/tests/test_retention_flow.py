@@ -211,6 +211,57 @@ class SignalIngestTests(BaseCase):
         self.assertEqual(resp.status_code, 400)
 
 
+class WellbeingCheckinTests(BaseCase):
+    """Opt-in, non-anonymous self wellbeing check-in (#46, option 2)."""
+
+    def test_low_checkin_raises_private_signal_and_opens_support(self):
+        resp = self.client.post(
+            "/api/retention/checkin/",
+            {"score": 1},
+            content_type="application/json",
+            **bearer(120, "EMPLOYEE"),
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()
+        self.assertTrue(body["flagged"])
+        self.assertIn("conversation_id", body)
+        emp = Employee.objects.get(user_id=120)
+        signal = emp.signals.get()
+        self.assertEqual(signal.signal_type, "low_wellbeing")
+        self.assertEqual(signal.intensity, 100)  # score 1 → most severe
+
+    def test_healthy_checkin_stores_nothing(self):
+        resp = self.client.post(
+            "/api/retention/checkin/",
+            {"score": 4},
+            content_type="application/json",
+            **bearer(121, "EMPLOYEE"),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["flagged"])
+        self.assertFalse(Employee.objects.filter(user_id=121).exists())
+
+    def test_repeated_low_checkin_is_deduplicated(self):
+        for _ in range(2):
+            resp = self.client.post(
+                "/api/retention/checkin/",
+                {"score": 2},
+                content_type="application/json",
+                **bearer(122, "EMPLOYEE"),
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["deduplicated"])
+        self.assertEqual(Employee.objects.get(user_id=122).signals.count(), 1)
+
+    def test_invalid_score_rejected(self):
+        for bad in ({"score": 0}, {"score": 9}, {"score": "x"}, {}):
+            resp = self.client.post(
+                "/api/retention/checkin/", bad,
+                content_type="application/json", **bearer(123, "EMPLOYEE"),
+            )
+            self.assertEqual(resp.status_code, 400, bad)
+
+
 class MultiTurnDialogueTests(BaseCase):
     """v1.5: the bot keeps the dialogue going until it finds the need."""
 

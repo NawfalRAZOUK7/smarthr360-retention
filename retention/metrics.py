@@ -20,6 +20,8 @@ ATTRITION_HIGH_RISK = get_gauge(
 ATTRITION_LAST_RUN = get_gauge(
     "retention_attrition_last_run_timestamp_seconds",
     "Unix time of the last attrition prediction run.",
+    # A timestamp: take the latest across workers, not the sum.
+    multiprocess_mode="max",
 )
 
 
